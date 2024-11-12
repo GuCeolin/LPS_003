@@ -410,11 +410,12 @@ function resgatarVantagem(vantagem_id) {
             alert(`Vantagem resgatada com sucesso! Seu código de cupom é: ${data.codigo_cupom}`);
             navegarPara('extrato');
         } else {
-            alert(data.mensagem);
+            alert(data.mensagem || 'Erro ao resgatar vantagem');
         }
     })
     .catch(error => {
-        alert('Erro ao resgatar vantagem');
+        console.error('Erro ao resgatar vantagem:', error);
+        alert('Erro ao resgatar vantagem. Por favor, tente novamente.');
     });
 }
 

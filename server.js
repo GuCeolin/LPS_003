@@ -327,25 +327,35 @@ app.post('/resgatar-vantagem', async (req, res) => {
     connection = await pool.getConnection();
     await connection.beginTransaction();
 
+    // First, get the aluno's id from the alunos table
+    const [alunoRows] = await connection.query('SELECT id FROM alunos WHERE usuario_id = ?', [aluno_id]);
+    if (alunoRows.length === 0) {
+      throw new Error('Aluno não encontrado');
+    }
+    const alunoRealId = alunoRows[0].id;
+
     const [vantagem] = await connection.query('SELECT * FROM vantagens WHERE id = ?', [vantagem_id]);
-    const [aluno] = await connection.query('SELECT saldo_moedas FROM alunos WHERE usuario_id = ?', [aluno_id]);
+    if (vantagem.length === 0) {
+      throw new Error('Vantagem não encontrada');
+    }
+
+    const [aluno] = await connection.query('SELECT saldo_moedas FROM alunos WHERE id = ?', [alunoRealId]);
 
     if (aluno[0].saldo_moedas < vantagem[0].custo_moedas) {
-      await connection.rollback();
-      return res.status(400).json({ mensagem: 'Saldo insuficiente' });
+      throw new Error('Saldo insuficiente');
     }
 
     const codigo_cupom = Math.random().toString(36).substring(7);
 
-    await connection.query('UPDATE alunos SET saldo_moedas = saldo_moedas - ? WHERE usuario_id = ?', [vantagem[0].custo_moedas, aluno_id]);
-    await connection.query('INSERT INTO resgates (aluno_id, vantagem_id, codigo_cupom) VALUES (?, ?, ?)', [aluno_id, vantagem_id, codigo_cupom]);
+    await connection.query('UPDATE alunos SET saldo_moedas = saldo_moedas - ? WHERE id = ?', [vantagem[0].custo_moedas, alunoRealId]);
+    await connection.query('INSERT INTO resgates (aluno_id, vantagem_id, codigo_cupom) VALUES (?, ?, ?)', [alunoRealId, vantagem_id, codigo_cupom]);
 
     await connection.commit();
     res.json({ mensagem: 'Vantagem resgatada com sucesso', codigo_cupom });
   } catch (error) {
     if (connection) await connection.rollback();
     console.error('Erro ao resgatar vantagem:', error);
-    res.status(500).json({ mensagem: 'Erro ao resgatar vantagem' });
+    res.status(400).json({ mensagem: error.message });
   } finally {
     if (connection) connection.release();
   }
