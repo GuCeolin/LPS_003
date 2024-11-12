@@ -133,55 +133,53 @@ function mostrarCadastro() {
             case 'aluno':
                 camposCadastro.innerHTML = `
                     <label for="nome">Nome:</label>
-                    <input type="text" id="nome" required>
+                    <input type="text" id="nome" name="nome" required>
                     <label for="email">E-mail:</label>
-                    <input type="email" id="email" required>
+                    <input type="email" id="email" name="email" required>
                     <label for="senha">Senha:</label>
-                    <input type="password" id="senha" required>
+                    <input type="password" id="senha" name="senha" required>
                     <label for="cpf">CPF:</label>
-                    <input type="text" id="cpf" required>
+                    <input type="text" id="cpf" name="cpf" required>
                     <label for="rg">RG:</label>
-                    <input type="text" id="rg" required>
+                    <input type="text" id="rg" name="rg" required>
                     <label for="endereco">Endereço:</label>
-                    <input type="text" id="endereco" required>
-                    <label for="instituicao">Instituição:</label>
-                    <select id="instituicao" required>
-                        <option value="1">Universidade A</option>
-                        <option value="2">Universidade B</option>
-                        <option value="3">Universidade C</option>
+                    <input type="text" id="endereco" name="endereco" required>
+                    <label for="instituicao_id">Instituição:</label>
+                    <select id="instituicao_id" name="instituicao_id" required>
+                        <option value="">Selecione uma instituição</option>
                     </select>
                     <label for="curso">Curso:</label>
-                    <input type="text" id="curso" required>
+                    <input type="text" id="curso" name="curso" required>
                 `;
+                carregarInstituicoes();
                 break;
             case 'professor':
                 camposCadastro.innerHTML = `
                     <label for="nome">Nome:</label>
-                    <input type="text" id="nome" required>
+                    <input type="text" id="nome" name="nome" required>
                     <label for="email">E-mail:</label>
-                    <input type="email" id="email" required>
+                    <input type="email" id="email" name="email" required>
                     <label for="senha">Senha:</label>
-                    <input type="password" id="senha" required>
+                    <input type="password" id="senha" name="senha" required>
                     <label for="cpf">CPF:</label>
-                    <input type="text" id="cpf" required>
-                    <label for="instituicao">Instituição:</label>
-                    <select id="instituicao" required>
-                        <option value="1">Universidade A</option>
-                        <option value="2">Universidade B</option>
-                        <option value="3">Universidade C</option>
+                    <input type="text" id="cpf" name="cpf" required>
+                    <label for="instituicao_id">Instituição:</label>
+                    <select id="instituicao_id" name="instituicao_id" required>
+                        <option value="">Selecione uma instituição</option>
                     </select>
                     <label for="departamento">Departamento:</label>
-                    <input type="text" id="departamento" required>
+                    <input type="text" id="departamento" name="departamento" required>
                 `;
+                carregarInstituicoes();
                 break;
             case 'empresa':
                 camposCadastro.innerHTML = `
                     <label for="nome">Nome da Empresa:</label>
-                    <input type="text" id="nome" required>
+                    <input type="text" id="nome" name="nome" required>
                     <label for="email">E-mail:</label>
-                    <input type="email" id="email" required>
+                    <input type="email" id="email" name="email" required>
                     <label for="senha">Senha:</label>
-                    <input type="password" id="senha" required>
+                    <input type="password" id="senha" name="senha" required>
                 `;
                 break;
             default:
@@ -200,7 +198,6 @@ function mostrarCadastro() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(dadosCadastro)
-                
             });
 
             const data = await response.json();
@@ -209,14 +206,35 @@ function mostrarCadastro() {
                 alert(`${tipo.charAt(0).toUpperCase() + tipo.slice(1)} cadastrado com sucesso!`);
                 navegarPara('login');
             } else {
-                alert(data.mensagem);
+                alert(`Erro ao cadastrar ${tipo}: ${data.mensagem}`);
             }
         } catch (error) {
-            alert(`Erro ao cadastrar ${tipo}`);
+            if (error.response) {
+                const errorData = await error.response.json();
+                alert(`Erro ao cadastrar ${tipo}: ${errorData.mensagem}`);
+            } else {
+                alert(`Erro ao cadastrar ${tipo}: ${error.message}`);
+            }
         }
     });
+}
 
-
+function carregarInstituicoes() {
+  fetch('/instituicoes')
+    .then(response => response.json())
+    .then(instituicoes => {
+      const selectInstituicao = document.getElementById('instituicao_id');
+      selectInstituicao.innerHTML = '<option value="">Selecione uma instituição</option>';
+      instituicoes.forEach(instituicao => {
+        const option = document.createElement('option');
+        option.value = instituicao.id;
+        option.textContent = instituicao.nome;
+        selectInstituicao.appendChild(option);
+      });
+    })
+    .catch(error => {
+      console.error('Erro ao carregar instituições:', error);
+    });
 }
 
 function enviarMoedas() {
@@ -235,8 +253,6 @@ function enviarMoedas() {
         </form>
     `);
 
-    // Aqui você deve implementar a lógica para carregar a lista de alunos
-    // Por exemplo:
     fetch('/alunos')
         .then(response => response.json())
         .then(alunos => {
@@ -345,10 +361,10 @@ function cadastrarVantagem() {
                 alert('Vantagem cadastrada com sucesso!');
                 document.getElementById('cadastrarVantagemForm').reset();
             } else {
-                alert(data.mensagem);
+                alert(`Erro ao cadastrar vantagem: ${data.mensagem}`);
             }
         } catch (error) {
-            alert('Erro ao cadastrar vantagem');
+            alert(`Erro ao cadastrar vantagem: ${error.message}`);
         }
     });
 }

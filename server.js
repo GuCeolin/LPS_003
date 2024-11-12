@@ -1,6 +1,7 @@
 const express = require('express');
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcrypt');
+const path = require('path');
 const app = express();
 
 app.use(express.json());
@@ -15,6 +16,45 @@ const pool = mysql.createPool({
   connectionLimit: 10,
   queueLimit: 0
 });
+
+// Middleware para tratamento de erros
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ mensagem: 'Erro interno do servidor' });
+});
+
+// Rota para inicializar instituições
+app.get('/init-instituicoes', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM instituicoes');
+    if (rows.length === 0) {
+      await pool.query(`
+        INSERT INTO instituicoes (nome) VALUES 
+        ('Universidade A'),
+        ('Universidade B'),
+        ('Universidade C')
+      `);
+      res.json({ mensagem: 'Instituições inicializadas com sucesso' });
+    } else {
+      res.json({ mensagem: 'Instituições já existem' });
+    }
+  } catch (error) {
+    console.error('Erro ao inicializar instituições:', error);
+    res.status(500).json({ mensagem: 'Erro ao inicializar instituições' });
+  }
+});
+
+// Rota para listar instituições
+app.get('/instituicoes', async (req, res) => {
+  try {
+    const [instituicoes] = await pool.query('SELECT id, nome FROM instituicoes');
+    res.json(instituicoes);
+  } catch (error) {
+    console.error('Erro ao listar instituições:', error);
+    res.status(500).json({ mensagem: 'Erro ao listar instituições' });
+  }
+});
+
 
 // Rota de login
 app.post('/login', async (req, res) => {
@@ -35,6 +75,7 @@ app.post('/login', async (req, res) => {
       res.status(400).json({ mensagem: 'Senha incorreta' });
     }
   } catch (error) {
+    console.error('Erro no login:', error);
     res.status(500).json({ mensagem: 'Erro no servidor' });
   }
 });
@@ -43,29 +84,47 @@ app.post('/login', async (req, res) => {
 app.post('/cadastro/aluno', async (req, res) => {
   const { nome, email, senha, cpf, rg, endereco, instituicao_id, curso } = req.body;
 
+  if (!nome || !email || !senha || !cpf || !rg || !endereco || !instituicao_id || !curso) {
+    return res.status(400).json({ mensagem: 'Todos os campos são obrigatórios' });
+  }
+
+  let connection;
   try {
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    // Verificar se a instituição existe
+    const [instituicao] = await connection.query('SELECT id FROM instituicoes WHERE id = ?', [instituicao_id]);
+    if (instituicao.length === 0) {
+      throw new Error('Instituição não encontrada');
+    }
+
     const hashedSenha = await bcrypt.hash(senha, 10);
 
-    await pool.query('START TRANSACTION');
-
-    const [result] = await pool.query(
+    const [result] = await connection.query(
       'INSERT INTO usuarios (nome, email, senha, tipo) VALUES (?, ?, ?, ?)',
       [nome, email, hashedSenha, 'aluno']
     );
 
     const usuario_id = result.insertId;
 
-    await pool.query(
-      'INSERT INTO alunos (usuario_id, cpf, rg, endereco, instituicao_id, curso) VALUES (?, ?, ?, ?, ?, ?)',
-      [usuario_id, cpf, rg, endereco, instituicao_id, curso]
+    await connection.query(
+      'INSERT INTO alunos (usuario_id, cpf, rg, endereco, instituicao_id, curso, saldo_moedas) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [usuario_id, cpf, rg, endereco, instituicao_id, curso, 0]
     );
 
-    await pool.query('COMMIT');
-
+    await connection.commit();
     res.status(201).json({ mensagem: 'Aluno cadastrado com sucesso' });
   } catch (error) {
-    await pool.query('ROLLBACK');
-    res.status(500).json({ mensagem: 'Erro no cadastro do aluno' });
+    if (connection) await connection.rollback();
+    console.error('Erro no cadastro do aluno:', error);
+    if (error.message === 'Instituição não encontrada') {
+      res.status(400).json({ mensagem: 'Instituição não encontrada. Por favor, selecione uma instituição válida.' });
+    } else {
+      res.status(500).json({ mensagem: 'Erro no cadastro do aluno', erro: error.message });
+    }
+  } finally {
+    if (connection) connection.release();
   }
 });
 
@@ -73,29 +132,47 @@ app.post('/cadastro/aluno', async (req, res) => {
 app.post('/cadastro/professor', async (req, res) => {
   const { nome, email, senha, cpf, instituicao_id, departamento } = req.body;
 
+  if (!nome || !email || !senha || !cpf || !instituicao_id || !departamento) {
+    return res.status(400).json({ mensagem: 'Todos os campos são obrigatórios' });
+  }
+
+  let connection;
   try {
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    // Verificar se a instituição existe
+    const [instituicao] = await connection.query('SELECT id FROM instituicoes WHERE id = ?', [instituicao_id]);
+    if (instituicao.length === 0) {
+      throw new Error('Instituição não encontrada');
+    }
+
     const hashedSenha = await bcrypt.hash(senha, 10);
 
-    await pool.query('START TRANSACTION');
-
-    const [result] = await pool.query(
+    const [result] = await connection.query(
       'INSERT INTO usuarios (nome, email, senha, tipo) VALUES (?, ?, ?, ?)',
       [nome, email, hashedSenha, 'professor']
     );
 
     const usuario_id = result.insertId;
 
-    await pool.query(
-      'INSERT INTO professores (usuario_id, cpf, instituicao_id, departamento) VALUES (?, ?, ?, ?)',
-      [usuario_id, cpf, instituicao_id, departamento]
+    await connection.query(
+      'INSERT INTO professores (usuario_id, cpf, instituicao_id, departamento, saldo_moedas) VALUES (?, ?, ?, ?, ?)',
+      [usuario_id, cpf, instituicao_id, departamento, 1000]
     );
 
-    await pool.query('COMMIT');
-
+    await connection.commit();
     res.status(201).json({ mensagem: 'Professor cadastrado com sucesso' });
   } catch (error) {
-    await pool.query('ROLLBACK');
-    res.status(500).json({ mensagem: 'Erro no cadastro do professor' });
+    if (connection) await connection.rollback();
+    console.error('Erro no cadastro do professor:', error);
+    if (error.message === 'Instituição não encontrada') {
+      res.status(400).json({ mensagem: 'Instituição não encontrada. Por favor, selecione uma instituição válida.' });
+    } else {
+      res.status(500).json({ mensagem: 'Erro no cadastro do professor', erro: error.message });
+    }
+  } finally {
+    if (connection) connection.release();
   }
 });
 
@@ -103,26 +180,30 @@ app.post('/cadastro/professor', async (req, res) => {
 app.post('/cadastro/empresa', async (req, res) => {
   const { nome, email, senha } = req.body;
 
+  let connection;
   try {
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
     const hashedSenha = await bcrypt.hash(senha, 10);
 
-    await pool.query('START TRANSACTION');
-
-    const [result] = await pool.query(
+    const [result] = await connection.query(
       'INSERT INTO usuarios (nome, email, senha, tipo) VALUES (?, ?, ?, ?)',
       [nome, email, hashedSenha, 'empresa']
     );
 
     const usuario_id = result.insertId;
 
-    await pool.query('INSERT INTO empresas (usuario_id) VALUES (?)', [usuario_id]);
+    await connection.query('INSERT INTO empresas (usuario_id) VALUES (?)', [usuario_id]);
 
-    await pool.query('COMMIT');
-
+    await connection.commit();
     res.status(201).json({ mensagem: 'Empresa cadastrada com sucesso' });
   } catch (error) {
-    await pool.query('ROLLBACK');
+    if (connection) await connection.rollback();
+    console.error('Erro no cadastro da empresa:', error);
     res.status(500).json({ mensagem: 'Erro no cadastro da empresa' });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
@@ -130,30 +211,34 @@ app.post('/cadastro/empresa', async (req, res) => {
 app.post('/enviar-moedas', async (req, res) => {
   const { professor_id, aluno_id, quantidade, motivo } = req.body;
 
+  let connection;
   try {
-    await pool.query('START TRANSACTION');
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
 
-    const [professor] = await pool.query('SELECT saldo_moedas FROM professores WHERE usuario_id = ?', [professor_id]);
+    const [professor] = await connection.query('SELECT saldo_moedas FROM professores WHERE usuario_id = ?', [professor_id]);
 
     if (professor[0].saldo_moedas < quantidade) {
-      await pool.query('ROLLBACK');
+      await connection.rollback();
       return res.status(400).json({ mensagem: 'Saldo insuficiente' });
     }
 
-    await pool.query('UPDATE professores SET saldo_moedas = saldo_moedas - ? WHERE usuario_id = ?', [quantidade, professor_id]);
-    await pool.query('UPDATE alunos SET saldo_moedas = saldo_moedas + ? WHERE usuario_id = ?', [quantidade, aluno_id]);
+    await connection.query('UPDATE professores SET saldo_moedas = saldo_moedas - ? WHERE usuario_id = ?', [quantidade, professor_id]);
+    await connection.query('UPDATE alunos SET saldo_moedas = saldo_moedas + ? WHERE usuario_id = ?', [quantidade, aluno_id]);
 
-    await pool.query(
+    await connection.query(
       'INSERT INTO transacoes (remetente_id, destinatario_id, quantidade_moedas, motivo) VALUES (?, ?, ?, ?)',
       [professor_id, aluno_id, quantidade, motivo]
     );
 
-    await pool.query('COMMIT');
-
+    await connection.commit();
     res.json({ mensagem: 'Moedas enviadas com sucesso' });
   } catch (error) {
-    await pool.query('ROLLBACK');
+    if (connection) await connection.rollback();
+    console.error('Erro ao enviar moedas:', error);
     res.status(500).json({ mensagem: 'Erro ao enviar moedas' });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
@@ -182,6 +267,7 @@ app.get('/extrato/:usuario_id', async (req, res) => {
 
     res.json({ saldo: saldo[0].saldo_moedas, transacoes });
   } catch (error) {
+    console.error('Erro ao consultar extrato:', error);
     res.status(500).json({ mensagem: 'Erro ao consultar extrato' });
   }
 });
@@ -190,15 +276,34 @@ app.get('/extrato/:usuario_id', async (req, res) => {
 app.post('/cadastrar-vantagem', async (req, res) => {
   const { empresa_id, nome, descricao, custo_moedas, foto_url } = req.body;
 
+  if (!empresa_id || !nome || !descricao || !custo_moedas || !foto_url) {
+    return res.status(400).json({ mensagem: 'Todos os campos são obrigatórios' });
+  }
+
+  let connection;
   try {
-    await pool.query(
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    // Verificar se a empresa existe
+    const [empresa] = await connection.query('SELECT id FROM empresas WHERE usuario_id = ?', [empresa_id]);
+    if (empresa.length === 0) {
+      throw new Error('Empresa não encontrada');
+    }
+
+    const [result] = await connection.query(
       'INSERT INTO vantagens (empresa_id, nome, descricao, custo_moedas, foto_url) VALUES (?, ?, ?, ?, ?)',
-      [empresa_id, nome, descricao, custo_moedas, foto_url]
+      [empresa[0].id, nome, descricao, custo_moedas, foto_url]
     );
 
-    res.status(201).json({ mensagem: 'Vantagem cadastrada com sucesso' });
+    await connection.commit();
+    res.status(201).json({ mensagem: 'Vantagem cadastrada com sucesso', id: result.insertId });
   } catch (error) {
-    res.status(500).json({ mensagem: 'Erro ao cadastrar vantagem' });
+    if (connection) await connection.rollback();
+    console.error('Erro ao cadastrar vantagem:', error);
+    res.status(500).json({ mensagem: 'Erro ao cadastrar vantagem', erro: error.message });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
@@ -208,6 +313,7 @@ app.get('/vantagens', async (req, res) => {
     const [vantagens] = await pool.query('SELECT * FROM vantagens');
     res.json(vantagens);
   } catch (error) {
+    console.error('Erro ao listar vantagens:', error);
     res.status(500).json({ mensagem: 'Erro ao listar vantagens' });
   }
 });
@@ -216,28 +322,32 @@ app.get('/vantagens', async (req, res) => {
 app.post('/resgatar-vantagem', async (req, res) => {
   const { aluno_id, vantagem_id } = req.body;
 
+  let connection;
   try {
-    await pool.query('START TRANSACTION');
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
 
-    const [vantagem] = await pool.query('SELECT * FROM vantagens WHERE id = ?', [vantagem_id]);
-    const [aluno] = await pool.query('SELECT saldo_moedas FROM alunos WHERE usuario_id = ?', [aluno_id]);
+    const [vantagem] = await connection.query('SELECT * FROM vantagens WHERE id = ?', [vantagem_id]);
+    const [aluno] = await connection.query('SELECT saldo_moedas FROM alunos WHERE usuario_id = ?', [aluno_id]);
 
     if (aluno[0].saldo_moedas < vantagem[0].custo_moedas) {
-      await pool.query('ROLLBACK');
+      await connection.rollback();
       return res.status(400).json({ mensagem: 'Saldo insuficiente' });
     }
 
     const codigo_cupom = Math.random().toString(36).substring(7);
 
-    await pool.query('UPDATE alunos SET saldo_moedas = saldo_moedas - ? WHERE usuario_id = ?', [vantagem[0].custo_moedas, aluno_id]);
-    await pool.query('INSERT INTO resgates (aluno_id, vantagem_id, codigo_cupom) VALUES (?, ?, ?)', [aluno_id, vantagem_id, codigo_cupom]);
+    await connection.query('UPDATE alunos SET saldo_moedas = saldo_moedas - ? WHERE usuario_id = ?', [vantagem[0].custo_moedas, aluno_id]);
+    await connection.query('INSERT INTO resgates (aluno_id, vantagem_id, codigo_cupom) VALUES (?, ?, ?)', [aluno_id, vantagem_id, codigo_cupom]);
 
-    await pool.query('COMMIT');
-
+    await connection.commit();
     res.json({ mensagem: 'Vantagem resgatada com sucesso', codigo_cupom });
   } catch (error) {
-    await pool.query('ROLLBACK');
+    if (connection) await connection.rollback();
+    console.error('Erro ao resgatar vantagem:', error);
     res.status(500).json({ mensagem: 'Erro ao resgatar vantagem' });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
@@ -247,8 +357,14 @@ app.get('/alunos', async (req, res) => {
     const [alunos] = await pool.query('SELECT u.id, u.nome FROM usuarios u JOIN alunos a ON u.id = a.usuario_id');
     res.json(alunos);
   } catch (error) {
+    console.error('Erro ao listar alunos:', error);
     res.status(500).json({ mensagem: 'Erro ao listar alunos' });
   }
+});
+
+// Rota para servir o arquivo HTML principal
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 const PORT = process.env.PORT || 3000;
